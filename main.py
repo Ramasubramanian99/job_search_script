@@ -2,12 +2,17 @@ import csv
 import sqlite3
 from pathlib import Path
 
+import ollama
 import pandas as pd
 from jobspy import scrape_jobs
 
 DB_PATH = Path("jobs.db")
 CSV_PATH = Path("jobs.csv")
 TABLE = "jobs"
+
+OLLAMA_MODEL = "qwen3:8b"
+# TODO: fill in the distillation instructions
+DISTILL_PROMPT = ""
 
 
 def get_existing_urls(conn: sqlite3.Connection) -> set[str]:
@@ -19,7 +24,22 @@ def get_existing_urls(conn: sqlite3.Connection) -> set[str]:
     return {row[0] for row in conn.execute(f"SELECT job_url FROM {TABLE}")}
 
 
-def save_new_jobs(jobs: pd.DataFrame) -> pd.DataFrame:
+def ensure_distilled_column(conn: sqlite3.Connection) -> None:
+    """Add distilled_description to a DB/CSV created before the column existed."""
+    columns = {row[1] for row in conn.execute(f"PRAGMA table_info({TABLE})")}
+    if columns and "distilled_description" not in columns:
+        conn.execute(f"ALTER TABLE {TABLE} ADD COLUMN distilled_description TEXT")
+
+    if CSV_PATH.exists():
+        existing_csv = pd.read_csv(CSV_PATH)
+        if "distilled_description" not in existing_csv.columns:
+            existing_csv["distilled_description"] = None
+            existing_csv.to_csv(
+                CSV_PATH, index=False, quoting=csv.QUOTE_NONNUMERIC, escapechar="\\"
+            )
+
+
+def filter_new_jobs(jobs: pd.DataFrame) -> pd.DataFrame:
     jobs = jobs.drop_duplicates(subset="job_url")
     # SQLite can't store dates/lists directly, so store everything non-numeric as text
     jobs = jobs.astype({c: str for c in jobs.select_dtypes(exclude="number").columns})
@@ -27,14 +47,39 @@ def save_new_jobs(jobs: pd.DataFrame) -> pd.DataFrame:
 
     with sqlite3.connect(DB_PATH) as conn:
         existing = get_existing_urls(conn)
-        new_jobs = jobs[~jobs["job_url"].isin(existing)]
-        if new_jobs.empty:
-            return new_jobs
+    return jobs[~jobs["job_url"].isin(existing)].copy()
 
-        new_jobs.to_sql(TABLE, conn, if_exists="append", index=False)
+
+def distill_description(description: str | None) -> str | None:
+    if not description:
+        return None
+    response = ollama.chat(
+        model=OLLAMA_MODEL,
+        messages=[
+            {"role": "system", "content": DISTILL_PROMPT},
+            {"role": "user", "content": description},
+        ],
+        think=False,  # skip qwen3's reasoning output, we only want the answer
+    )
+    return response.message.content.strip()
+
+
+def distill_descriptions(jobs: pd.DataFrame) -> pd.DataFrame:
+    distilled = []
+    for i, description in enumerate(jobs["description"], start=1):
+        print(f"Distilling description {i}/{len(jobs)}")
+        distilled.append(distill_description(description))
+    jobs["distilled_description"] = distilled
+    return jobs
+
+
+def save_jobs(jobs: pd.DataFrame) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        ensure_distilled_column(conn)
+        jobs.to_sql(TABLE, conn, if_exists="append", index=False)
         conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_job_url ON {TABLE}(job_url)")
 
-    new_jobs.to_csv(
+    jobs.to_csv(
         CSV_PATH,
         mode="a",
         header=not CSV_PATH.exists(),
@@ -42,7 +87,6 @@ def save_new_jobs(jobs: pd.DataFrame) -> pd.DataFrame:
         quoting=csv.QUOTE_NONNUMERIC,
         escapechar="\\",
     )
-    return new_jobs
 
 
 def main():
@@ -60,8 +104,14 @@ def main():
     )
     print(f"Found {len(jobs)} jobs")
 
-    new_jobs = save_new_jobs(jobs)
-    print(f"Saved {len(new_jobs)} new jobs ({len(jobs) - len(new_jobs)} already stored)")
+    new_jobs = filter_new_jobs(jobs)
+    print(f"{len(new_jobs)} new jobs ({len(jobs) - len(new_jobs)} already stored)")
+    if new_jobs.empty:
+        return
+
+    new_jobs = distill_descriptions(new_jobs)
+    save_jobs(new_jobs)
+    print(f"Saved {len(new_jobs)} new jobs")
 
 
 if __name__ == "__main__":
