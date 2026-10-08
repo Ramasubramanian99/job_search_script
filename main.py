@@ -11,8 +11,32 @@ CSV_PATH = Path("jobs.csv")
 TABLE = "jobs"
 
 OLLAMA_MODEL = "qwen3:8b"
-# TODO: fill in the distillation instructions
-DISTILL_PROMPT = ""
+DISTILL_PROMPT = """\
+You condense job descriptions down to the candidate requirements only.
+
+Keep:
+- Years of experience (overall and per skill/technology, exactly as stated)
+- Required / minimum qualifications
+- Preferred / nice-to-have qualifications
+- Technical skills, languages, frameworks, tools, and platforms
+- Education, certifications, and work authorization/clearance requirements
+
+Remove: company overview, mission/culture text, salary, benefits, perks, \
+location/hybrid details, application instructions, and EEO statements.
+
+Rules:
+- Use only information in the description. Never invent or infer requirements.
+- Keep the original wording for skills and numbers; drop filler words.
+- Omit a section entirely if the description has nothing for it.
+- Output plain text in exactly this format, with no preamble or closing remarks:
+
+Experience: <years of experience, or "Not specified">
+Required:
+- <requirement>
+Preferred:
+- <requirement>
+Skills: <comma-separated list>
+"""
 
 
 def get_existing_urls(conn: sqlite3.Connection) -> set[str]:
@@ -57,7 +81,7 @@ def distill_description(description: str | None) -> str | None:
         model=OLLAMA_MODEL,
         messages=[
             {"role": "system", "content": DISTILL_PROMPT},
-            {"role": "user", "content": description},
+            {"role": "user", "content": f"{description}\n\n/no_think"},
         ],
         think=False,  # skip qwen3's reasoning output, we only want the answer
     )
