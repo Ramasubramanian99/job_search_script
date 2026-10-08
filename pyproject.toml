@@ -1,0 +1,9 @@
+[project]
+name = "job-automation-pipeline"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "python-jobspy>=1.2.0",
+]
