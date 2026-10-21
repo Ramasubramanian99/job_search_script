@@ -12,3 +12,7 @@ wheels/
 # Scraped job data
 jobs.db
 jobs.csv
+
+# Secrets
+.env
+resume.py

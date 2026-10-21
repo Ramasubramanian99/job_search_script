@@ -1,42 +1,26 @@
 import csv
 import sqlite3
-from pathlib import Path
 
 import ollama
 import pandas as pd
+from dotenv import load_dotenv
 from jobspy import scrape_jobs
+from typesafe_sdk import Score, TypeSafeClient
 
-DB_PATH = Path("jobs.db")
-CSV_PATH = Path("jobs.csv")
-TABLE = "jobs"
+from config import (
+    CSV_PATH,
+    DB_PATH,
+    DISTILL_PROMPT,
+    OLLAMA_MODEL,
+    RELEVANCE_CRITERIA,
+    RELEVANCE_THRESHOLD,
+    RELEVANT_TABLE,
+    TABLE,
+)
+from resume import RESUME
 
-OLLAMA_MODEL = "qwen3:8b"
-DISTILL_PROMPT = """\
-You condense job descriptions down to the candidate requirements only.
-
-Keep:
-- Years of experience (overall and per skill/technology, exactly as stated)
-- Required / minimum qualifications
-- Preferred / nice-to-have qualifications
-- Technical skills, languages, frameworks, tools, and platforms
-- Education, certifications, and work authorization/clearance requirements
-
-Remove: company overview, mission/culture text, salary, benefits, perks, \
-location/hybrid details, application instructions, and EEO statements.
-
-Rules:
-- Use only information in the description. Never invent or infer requirements.
-- Keep the original wording for skills and numbers; drop filler words.
-- Omit a section entirely if the description has nothing for it.
-- Output plain text in exactly this format, with no preamble or closing remarks:
-
-Experience: <years of experience, or "Not specified">
-Required:
-- <requirement>
-Preferred:
-- <requirement>
-Skills: <comma-separated list>
-"""
+# Load TYPESAFE_API_KEY (and any other secrets) from .env
+load_dotenv()
 
 
 def get_existing_urls(conn: sqlite3.Connection) -> set[str]:
@@ -97,6 +81,32 @@ def distill_descriptions(jobs: pd.DataFrame) -> pd.DataFrame:
     return jobs
 
 
+def score_relevance(client: TypeSafeClient, distilled_description: str | None) -> float | None:
+    """Score how well the resume fits a job's requirements on a 0-100 scale using Jev."""
+    if not distilled_description:
+        return None
+    response = client.system_one(
+        state={"resume": RESUME, "job_requirements": distilled_description},
+        questions={
+            "relevance": Score(
+                instructions="How well does the candidate's resume match the job requirements?",
+                criteria=RELEVANCE_CRITERIA,
+            ),
+        },
+    )
+    score = response.answers["relevance"].score
+    return round(score / (len(RELEVANCE_CRITERIA) - 1) * 100, 1)
+
+
+def save_relevant_jobs(jobs: pd.DataFrame) -> None:
+    # Only called with jobs new to the jobs table, so they can't already be here
+    with sqlite3.connect(DB_PATH) as conn:
+        jobs.to_sql(RELEVANT_TABLE, conn, if_exists="append", index=False)
+        conn.execute(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS idx_relevant_job_url ON {RELEVANT_TABLE}(job_url)"
+        )
+
+
 def save_jobs(jobs: pd.DataFrame) -> None:
     with sqlite3.connect(DB_PATH) as conn:
         ensure_distilled_column(conn)
@@ -136,6 +146,23 @@ def main():
     new_jobs = distill_descriptions(new_jobs)
     save_jobs(new_jobs)
     print(f"Saved {len(new_jobs)} new jobs")
+
+    if not RESUME:
+        print("RESUME is empty, skipping relevance scoring")
+        return
+
+    with TypeSafeClient() as client:
+        scores = []
+        for i, distilled in enumerate(new_jobs["distilled_description"], start=1):
+            score = score_relevance(client, distilled)
+            print(f"Scored job {i}/{len(new_jobs)}: {score}")
+            scores.append(score)
+    new_jobs["relevance_score"] = pd.to_numeric(scores)
+
+    relevant_jobs = new_jobs[new_jobs["relevance_score"] >= RELEVANCE_THRESHOLD]
+    if not relevant_jobs.empty:
+        save_relevant_jobs(relevant_jobs)
+    print(f"Saved {len(relevant_jobs)} relevant jobs (score >= {RELEVANCE_THRESHOLD})")
 
 
 if __name__ == "__main__":
