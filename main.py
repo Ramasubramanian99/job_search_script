@@ -8,13 +8,22 @@ from jobspy import scrape_jobs
 from typesafe_sdk import Score, TypeSafeClient
 
 from config import (
+    COUNTRY_INDEED,
     CSV_PATH,
     DB_PATH,
     DISTILL_PROMPT,
+    FETCH_DESCRIPTION,
+    HOURS_OLD,
+    JOB_TYPES,
+    LOCATION,
     OLLAMA_MODEL,
+    PROXIES,
     RELEVANCE_CRITERIA,
     RELEVANCE_THRESHOLD,
     RELEVANT_TABLE,
+    RESULTS_WANTED,
+    SEARCH_TERM,
+    SITE_NAMES,
     TABLE,
 )
 from resume import RESUME
@@ -125,16 +134,23 @@ def save_jobs(jobs: pd.DataFrame) -> None:
 
 def main():
     print("Hello from job-automation-pipeline!")
-    jobs = scrape_jobs(
-        site_name=["indeed", "linkedin"],
-        search_term="software engineer",
-        location="Toronto, ON",
-        results_wanted=5,
-        job_type=["fulltime", "contract"],
-        hours_old=12,
-        country_indeed='canada',
-        fetch_description=True 
-        # proxies=["208.195.175.46:65095", "208.195.175.45:65095", "localhost"],
+    # scrape_jobs only accepts a single job_type, so scrape once per type
+    jobs = pd.concat(
+        [
+            scrape_jobs(
+                site_name=SITE_NAMES,
+                search_term=SEARCH_TERM,
+                location=LOCATION,
+                results_wanted=RESULTS_WANTED,
+                job_type=job_type,
+                hours_old=HOURS_OLD,
+                country_indeed=COUNTRY_INDEED,
+                fetch_description=FETCH_DESCRIPTION,
+                proxies=PROXIES,
+            )
+            for job_type in JOB_TYPES
+        ],
+        ignore_index=True,
     )
     print(f"Found {len(jobs)} jobs")
 

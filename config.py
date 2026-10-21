@@ -1,5 +1,19 @@
 from pathlib import Path
 
+# Job search settings passed to jobspy's scrape_jobs
+SITE_NAMES = ["indeed", "linkedin"]
+SEARCH_TERM = "software engineer"
+LOCATION = "Toronto, ON"
+# Per site, per job type
+RESULTS_WANTED = 5
+# scrape_jobs only accepts one job_type, so main() scrapes once per entry
+JOB_TYPES = ["fulltime", "contract"]
+HOURS_OLD = 12
+COUNTRY_INDEED = "canada"
+FETCH_DESCRIPTION = True
+# e.g. ["208.195.175.46:65095", "208.195.175.45:65095", "localhost"]
+PROXIES = None
+
 DB_PATH = Path("jobs.db")
 CSV_PATH = Path("jobs.csv")
 TABLE = "jobs"

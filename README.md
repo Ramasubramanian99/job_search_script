@@ -12,7 +12,7 @@ Each run of `main.py`:
 4. **Scores** your resume against each distilled description from 0 to 100 using [TypeSafe AI](https://typesafe.ai) ([Python SDK docs](https://docs.typesafe.ai/sdk/python/)).
 5. **Saves** jobs scoring at or above `RELEVANCE_THRESHOLD` (default 70) to a separate "relevant" table.
 
-The search term, location, sites, and time window are set in the `scrape_jobs(...)` call in `main()`. The model, prompt, scoring rubric, and threshold are in `config.py`.
+All settings are in `config.py`: the search (sites, search term, location, job types, results wanted, time window), the Ollama model and prompt, and the scoring rubric and threshold.
 
 ## How the data is stored
 
